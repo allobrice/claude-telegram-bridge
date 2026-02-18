@@ -1,0 +1,7 @@
+{
+  "telegram_bot_token": "YOUR_BOT_TOKEN_FROM_BOTFATHER",
+  "telegram_chat_id": 123456789,
+  "bridge_host": "127.0.0.1",
+  "bridge_port": 7888,
+  "approval_timeout_seconds": 300
+}
