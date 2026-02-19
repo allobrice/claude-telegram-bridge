@@ -1,7 +1,0 @@
-{
-  "telegram_bot_token": "8499638820:AAEXzKfkrqpz8RY7er7Xm11BHNywdFl4TIc",
-  "telegram_chat_id": 6903259236,
-  "bridge_host": "127.0.0.1",
-  "bridge_port": 7888,
-  "approval_timeout_seconds": 300
-}

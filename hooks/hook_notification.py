@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 """
 Claude Code Hook: Notification
-================================
-Envoie les notifications Claude Code vers Telegram.
-Gère aussi l'enregistrement de l'agent au démarrage.
-
-Installation dans ~/.claude/settings.json:
-{
-  "hooks": {
-    "Notification": [
-      {
-        "type": "command",
-        "command": "python3 /chemin/vers/hook_notification.py"
-      }
-    ]
-  }
-}
 """
 
 import json
@@ -26,9 +11,12 @@ import urllib.request
 BRIDGE_URL = os.environ.get("CLAUDE_BRIDGE_URL", "http://127.0.0.1:7888")
 AGENT_ID = os.environ.get("CLAUDE_AGENT_ID", "main")
 AGENT_NAME = os.environ.get("CLAUDE_AGENT_NAME", "Claude Code")
-
+BRIDGE_MODE = os.environ.get("CLAUDE_BRIDGE_MODE", "telegram").lower()
 
 def main():
+    if BRIDGE_MODE == "local":
+        return
+
     raw = sys.stdin.read().strip()
     if not raw:
         return
@@ -44,7 +32,7 @@ def main():
     if not message:
         return
 
-    # Register agent on first notification
+    # Register agent
     try:
         payload = json.dumps({
             "agent_id": AGENT_ID,
@@ -78,8 +66,7 @@ def main():
         with urllib.request.urlopen(req, timeout=5):
             pass
     except Exception:
-        pass  # Non-blocking
-
+        pass
 
 if __name__ == "__main__":
     main()

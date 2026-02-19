@@ -8,10 +8,10 @@ Communication **bidirectionnelle** entre tes agents Claude Code et Telegram.
 |---|---|
 | 📩 Notifications | Reçois les notifications des agents en temps réel |
 | 🔐 Approbations | Approuve/refuse les actions sensibles via boutons inline |
-| 💬 Messages | Envoie des messages/instructions à tes agents |
+| 💬 Messages | Envoie des instructions à tes agents |
 | 🤖 Multi-agents | Gère plusieurs agents/sous-agents simultanément |
 | ⚡ Auto-approve | Active l'auto-approbation par session pour aller plus vite |
-| 🏁 Lifecycle | Notifications de démarrage/arrêt des agents |
+| ⏸️ Pause/Resume | Bascule entre contrôle Telegram et travail local |
 
 ## Architecture
 
@@ -20,12 +20,6 @@ Claude Code Agent ──hook──→ Hook Script ──HTTP──→ Bridge Ser
                                                        ↑                    │
                                                        └────── réponse ─────┘
 ```
-
-Le **Bridge Server** tourne en local (`127.0.0.1:7888`) et combine :
-- Un **serveur HTTP** (FastAPI) qui reçoit les requêtes des hooks
-- Un **bot Telegram** (long polling) qui communique avec toi
-
-> ⚠️ Pas besoin d'IP publique ni de port ouvert. Le long polling Telegram fonctionne derrière un NAT/firewall.
 
 ## Installation
 
@@ -38,13 +32,8 @@ Le **Bridge Server** tourne en local (`127.0.0.1:7888`) et combine :
 ### 2. Setup
 
 ```bash
-# Cloner/copier le projet
 cd claude-telegram-bridge
-
-# Installer les dépendances
-pip3 install -r requirements.txt
-
-# Configurer
+pip install -r requirements.txt
 cp config/config.example.json config/config.json
 # Éditer config.json avec ton token bot et chat ID
 ```
@@ -63,44 +52,70 @@ cp config/config.example.json config/config.json
 
 ### 4. Configurer les hooks Claude Code
 
-Édite `~/.claude/settings.json` :
+Édite `~/.claude/settings.json` (Windows: `C:\Users\<TON_USER>\.claude\settings.json`) :
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "type": "command",
-        "command": "python3 /chemin/absolu/vers/claude-telegram-bridge/hooks/hook_pre_tool_use.py"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python /chemin/vers/claude-telegram-bridge/hooks/hook_pre_tool_use.py"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "type": "command",
-        "command": "python3 /chemin/absolu/vers/claude-telegram-bridge/hooks/hook_post_tool_use.py"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python /chemin/vers/claude-telegram-bridge/hooks/hook_post_tool_use.py"
+          }
+        ]
       }
     ],
     "Notification": [
       {
-        "type": "command",
-        "command": "python3 /chemin/absolu/vers/claude-telegram-bridge/hooks/hook_notification.py"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python /chemin/vers/claude-telegram-bridge/hooks/hook_notification.py"
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "type": "command",
-        "command": "python3 /chemin/absolu/vers/claude-telegram-bridge/hooks/hook_stop.py"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python /chemin/vers/claude-telegram-bridge/hooks/hook_stop.py"
+          }
+        ]
       }
     ]
   }
 }
 ```
 
+> **Note Windows:** Remplace `/chemin/vers/` par ton chemin avec des forward slashes.
+> Exemple: `C:/Users/Admin/WebstormProjects/claude-telegram-bridge/hooks/...`
+
 ### 5. Lancer
 
 ```bash
-# Terminal dédié (ou tmux/screen/systemd)
+# Linux/Mac
 ./start.sh
+
+# Windows
+python src/bridge_server.py
 ```
 
 ## Utilisation
@@ -116,85 +131,108 @@ cp config/config.example.json config/config.json
 | `/msg <agent_id> <message>` | Envoyer un message à un agent |
 | `/approve_all` | Approuver toutes les demandes en attente |
 | `/deny_all` | Refuser toutes les demandes en attente |
+| `/pause` | Approbations sur le terminal |
+| `/resume` | Approbations sur Telegram |
+| `/shutdown confirm` | Arrêter le bridge |
+
+### 💬 Comment envoyer des messages à Claude
+
+**⚠️ Important:** Les messages sont transmis à Claude **lors de la prochaine demande d'approbation**.
+
+#### Méthode 1 : Répondre à une demande d'approbation (recommandé)
+
+1. Tu reçois une demande d'approbation sur Telegram
+2. **Réponds directement** à ce message avec tes instructions
+3. Le message est transmis ET l'action est approuvée automatiquement
+4. Claude voit tes instructions dans le terminal
+
+```
+[Demande d'approbation de Claude]
+    ↓
+[Tu réponds: "Concentre-toi sur les tests unitaires"]
+    ↓
+✅ Approuvé avec instructions!
+```
+
+#### Méthode 2 : Utiliser /msg (file d'attente)
+
+```
+/msg main Fais d'abord les tests du module auth
+```
+
+Le message est mis en file d'attente et sera :
+- Affiché dans la prochaine demande d'approbation
+- Transmis à Claude quand tu approuves
+
+#### Pourquoi ça fonctionne ainsi ?
+
+Claude Code est un processus interactif. On ne peut pas "injecter" du texte pendant qu'il travaille. Les hooks ne se déclenchent que quand Claude fait une action. C'est pourquoi les messages sont livrés au moment des approbations.
 
 ### Flux d'approbation
 
-1. L'agent veut exécuter `bash` → le hook `PreToolUse` s'active
-2. Tu reçois un message Telegram avec 3 boutons :
-   - **✅ Approuver** — approuve cette action
-   - **❌ Refuser** — refuse cette action
-   - **✅ Approuver tout (session)** — approuve + active l'auto-approbation pour cet agent
-3. L'agent continue ou s'arrête selon ta réponse
+1. Claude veut exécuter `bash` → le hook s'active
+2. Tu reçois un message Telegram avec :
+   - Les détails de l'action
+   - Les messages en attente (si tu as utilisé `/msg`)
+   - 3 boutons : Approuver / Refuser / Approuver tout
+   - La possibilité de répondre avec des instructions
+3. Tu choisis une action ou tu réponds avec des instructions
+4. Claude continue avec tes instructions visibles dans le terminal
 
-### Envoyer un message à un agent
+## Modes de fonctionnement
 
-Tu peux répondre directement à un message du bot, ou utiliser :
+### Option 1 : Commandes Telegram (recommandé)
+
 ```
-/msg main Concentre-toi sur les tests unitaires d'abord
+/pause   → Les approbations passent sur le terminal (comportement natif Claude Code)
+/resume  → Les approbations reviennent sur Telegram
 ```
 
-## Variables d'environnement pour sous-agents
+**Avec /pause :**
+- Tu vois les demandes d'approbation dans le terminal
+- Tu réponds directement dans le terminal (y/n, etc.)
+- Le bridge reste actif mais n'intercepte plus les approbations
 
-Quand tu lances des sous-agents, passe des variables pour les identifier :
+### Option 2 : Variable d'environnement
 
+**Windows (PowerShell):**
+```powershell
+$env:CLAUDE_BRIDGE_MODE="local"; claude    # Bypass complet
+$env:CLAUDE_BRIDGE_MODE="notify"; claude   # Notifie mais n'attend pas
+$env:CLAUDE_BRIDGE_MODE="telegram"; claude # Approbations complètes (défaut)
+```
+
+**Linux/Mac:**
 ```bash
-CLAUDE_AGENT_ID=subagent-tests CLAUDE_AGENT_NAME="Agent Tests" claude code ...
+CLAUDE_BRIDGE_MODE=local claude
 ```
 
-## Personnalisation des hooks
+### Option 3 : Bridge éteint = mode local automatique
 
-### Outils safe (jamais d'approbation)
+Si le bridge n'est pas lancé, les hooks font un auto-approve automatique.
 
-Édite `SAFE_TOOLS` dans `hook_pre_tool_use.py` :
-```python
-SAFE_TOOLS = {"read", "list_files", "search", "grep", "glob", "view"}
+## Multi-agents
+
+Pour identifier plusieurs agents :
+
+```powershell
+# Terminal 1
+$env:CLAUDE_AGENT_ID="main"; claude
+
+# Terminal 2
+$env:CLAUDE_AGENT_ID="tests"; $env:CLAUDE_AGENT_NAME="Agent Tests"; claude
 ```
 
-### Outils critiques (toujours une approbation, même en auto-approve)
-
-```python
-CRITICAL_TOOLS = {"bash", "write", "edit", "execute"}
+Sur Telegram :
 ```
-
-## Lancer en arrière-plan
-
-### Avec systemd (Linux)
-
-```ini
-# ~/.config/systemd/user/claude-bridge.service
-[Unit]
-Description=Claude Code Telegram Bridge
-
-[Service]
-ExecStart=/chemin/vers/claude-telegram-bridge/start.sh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-```
-
-```bash
-systemctl --user enable claude-bridge
-systemctl --user start claude-bridge
-```
-
-### Avec tmux
-
-```bash
-tmux new-session -d -s bridge './start.sh'
+/agents
+/msg tests Lance les tests du module auth
 ```
 
 ## API du Bridge
-
-Le bridge expose une API REST sur `localhost:7888` :
 
 | Endpoint | Méthode | Description |
 |---|---|---|
 | `/notify` | POST | Envoyer une notification |
 | `/approve` | POST | Demander une approbation (bloquant) |
-| `/check_auto_approve` | POST | Vérifier l'auto-approbation |
-| `/send_message` | POST | Récupérer les messages utilisateur |
-| `/register_agent` | POST | Enregistrer un agent |
-| `/unregister_agent` | POST | Désenregistrer un agent |
 | `/status` | GET | Health check |
